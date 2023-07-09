@@ -18,6 +18,21 @@ pub struct Point {
     lon: f64,
 }
 
+impl From<geo_types::Point> for Point {
+    fn from(p: geo_types::Point<f64>) -> Self {
+        Point {
+            lat: p.y(),
+            lon: p.x(),
+        }
+    }
+}
+
+impl From<Point> for geo_types::Point<f64> {
+    fn from(p: Point) -> Self {
+        geo_types::Point::new(p.lon, p.lat)
+    }
+}
+
 #[derive(Debug)]
 pub enum Error {
     InvalidGpx(String),
