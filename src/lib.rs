@@ -8,8 +8,19 @@ use std::io::BufReader;
 
 #[derive(Debug, Clone)]
 pub enum Nogo {
-    Point(Point, f64),
-    Line(Vec<Point>),
+    Point {
+        point: Point,
+        radius: f64,
+        weight: Option<f64>,
+    },
+    Line {
+        points: Vec<Point>,
+        weight: Option<f64>,
+    },
+    Polygon {
+        points: Vec<Point>,
+        weight: Option<f64>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -126,7 +137,6 @@ impl Brouter {
         name: Option<&str>,
         export_waypoints: bool,
     ) -> Result<gpx::Gpx, Error> {
-        let timode = timode.unwrap_or_default();
         let lon_lat_strings: Vec<String> = points
             .iter()
             .map(|p| format!("{},{}", p.lon(), p.lat()))
@@ -139,8 +149,24 @@ impl Brouter {
         let nogos_string: String = nogos
             .iter()
             .filter_map(|nogo| match nogo {
-                Nogo::Point(p, radius) => Some(format!("{},{},{}", p.lon(), p.lat(), radius)),
-                Nogo::Line(_) => None,
+                Nogo::Point {
+                    point,
+                    radius,
+                    weight,
+                } => {
+                    let mut v = vec![point.lon(), point.lat(), *radius];
+                    if let Some(weight) = weight {
+                        v.push(*weight);
+                    }
+                    Some(
+                        v.iter()
+                            .map(|f| f.to_string())
+                            .collect::<Vec<_>>()
+                            .join(","),
+                    )
+                }
+                Nogo::Polygon { .. } => None,
+                Nogo::Line { .. } => None,
             })
             .collect::<Vec<_>>()
             .join("|");
@@ -148,32 +174,81 @@ impl Brouter {
         let polylines = nogos
             .iter()
             .filter_map(|nogo| match nogo {
-                Nogo::Point(_, _) => None,
-                Nogo::Line(points) => {
-                    let lat_lon_strings: Vec<String> = points
+                Nogo::Point { .. } => None,
+                Nogo::Polygon { .. } => None,
+                Nogo::Line { points, weight } => {
+                    let mut v = points
                         .iter()
-                        .map(|p| format!("{},{}", p.lon(), p.lat()))
-                        .collect();
-                    Some(lat_lon_strings.join(","))
+                        .flat_map(|p| vec![p.lon(), p.lat()])
+                        .collect::<Vec<_>>();
+                    if let Some(weight) = weight {
+                        v.push(*weight);
+                    }
+                    Some(
+                        v.iter()
+                            .map(|f| f.to_string())
+                            .collect::<Vec<_>>()
+                            .join(","),
+                    )
                 }
             })
             .collect::<Vec<_>>()
             .join("|");
 
-        let alternativeidx = alternativeidx.unwrap_or(0);
-
-        assert!((0..=3).contains(&alternativeidx));
+        let polygons = nogos
+            .iter()
+            .filter_map(|nogo| match nogo {
+                Nogo::Point { .. } => None,
+                Nogo::Line { .. } => None,
+                Nogo::Polygon { points, weight } => {
+                    let mut v = points
+                        .iter()
+                        .flat_map(|p| vec![p.lon(), p.lat()])
+                        .collect::<Vec<_>>();
+                    if let Some(weight) = weight {
+                        v.push(*weight);
+                    }
+                    Some(
+                        v.iter()
+                            .map(|f| f.to_string())
+                            .collect::<Vec<_>>()
+                            .join(","),
+                    )
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("|");
 
         let mut url = self.base_url.join("brouter").unwrap();
 
         url.query_pairs_mut()
             .append_pair("lonlats", &lonlats)
             .append_pair("profile", profile)
-            .append_pair("alternativeidx", &alternativeidx.to_string())
-            .append_pair("format", "gpx")
-            .append_pair("timode", (timode as i32).to_string().as_str())
-            .append_pair("nogos", &nogos_string)
-            .append_pair("polylines", &polylines);
+            .append_pair("format", "gpx");
+
+        if let Some(alternativeidx) = alternativeidx {
+            assert!((0..=3).contains(&alternativeidx));
+
+            url.query_pairs_mut()
+                .append_pair("alternativeidx", alternativeidx.to_string().as_str());
+        }
+
+        if let Some(timode) = timode {
+            url.query_pairs_mut()
+                .append_pair("timode", (timode as i32).to_string().as_str());
+        }
+
+        if !polygons.is_empty() {
+            url.query_pairs_mut().append_pair("polygons", &polygons);
+        }
+
+        if !nogos_string.is_empty() {
+            url.query_pairs_mut().append_pair("nogos", &nogos_string);
+        }
+
+        if !polylines.is_empty() {
+            url.query_pairs_mut().append_pair("polylines", &polylines);
+        }
 
         if export_waypoints {
             url.query_pairs_mut().append_pair("exportWaypoints", "1");
