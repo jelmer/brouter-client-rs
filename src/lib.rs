@@ -116,7 +116,7 @@ impl Brouter {
 
         info!("Planning route along {:?}", points);
 
-        let lonlats = lon_lat_strings.join("%7C");
+        let lonlats = lon_lat_strings.join("|");
 
         let nogos_string: String = nogos
             .iter()
@@ -125,7 +125,7 @@ impl Brouter {
                 Nogo::Line(_) => None,
             })
             .collect::<Vec<_>>()
-            .join("%7C");
+            .join("|");
 
         let polylines = nogos
             .iter()
@@ -140,7 +140,7 @@ impl Brouter {
                 }
             })
             .collect::<Vec<_>>()
-            .join("%7C");
+            .join("|");
 
         let alternativeidx = alternativeidx.unwrap_or(0);
 
