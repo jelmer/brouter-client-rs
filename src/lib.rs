@@ -37,6 +37,7 @@ impl From<Point> for geo_types::Point<f64> {
 pub enum Error {
     InvalidGpx(String),
     Http(reqwest::Error),
+    MissingDataFile(String),
 }
 
 impl std::error::Error for Error {}
@@ -46,6 +47,7 @@ impl std::fmt::Display for Error {
         match self {
             Error::InvalidGpx(s) => write!(f, "Invalid GPX: {}", s),
             Error::Http(e) => write!(f, "HTTP error: {}", e),
+            Error::MissingDataFile(s) => write!(f, "Missing data file: {}", s),
         }
     }
 }
@@ -73,6 +75,19 @@ impl Default for Brouter {
     fn default() -> Self {
         Self::new("http://localhost:17777")
     }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub enum TurnInstructionMode {
+    #[default]
+    None = 0,
+    AutoChoose = 1,
+    LocusStyle = 2,
+    OsmandStyle = 3,
+    CommentStyle = 4,
+    GpsiesStyle = 5,
+    OruxStyle = 6,
+    LocusOldStyle = 7,
 }
 
 impl Brouter {
@@ -107,8 +122,11 @@ impl Brouter {
         nogos: &[Nogo],
         profile: &str,
         alternativeidx: Option<u8>,
+        timode: Option<TurnInstructionMode>,
         name: Option<&str>,
+        export_waypoints: bool,
     ) -> Result<gpx::Gpx, Error> {
+        let timode = timode.unwrap_or_default();
         let lon_lat_strings: Vec<String> = points
             .iter()
             .map(|p| format!("{},{}", p.lon(), p.lat()))
@@ -153,9 +171,13 @@ impl Brouter {
             .append_pair("profile", profile)
             .append_pair("alternativeidx", &alternativeidx.to_string())
             .append_pair("format", "gpx")
-            .append_pair("timode", "3")
+            .append_pair("timode", (timode as i32).to_string().as_str())
             .append_pair("nogos", &nogos_string)
             .append_pair("polylines", &polylines);
+
+        if export_waypoints {
+            url.query_pairs_mut().append_pair("exportWaypoints", "1");
+        }
 
         if let Some(name) = name {
             url.query_pairs_mut().append_pair("trackname", name);
@@ -173,10 +195,9 @@ impl Brouter {
         let text = response.bytes().map_err(Error::Http)?.to_vec();
 
         if let Some(m) = regex!("datafile (.*) not found\n"B).captures(text.as_slice()) {
-            panic!(
-                "datafile {} not found",
-                String::from_utf8_lossy(m.get(1).unwrap().as_bytes())
-            );
+            return Err(Error::MissingDataFile(
+                String::from_utf8_lossy(m.get(1).unwrap().as_bytes()).to_string(),
+            ));
         }
 
         let gpx: gpx::Gpx = gpx::read(BufReader::new(text.as_slice())).map_err(|_e| {
