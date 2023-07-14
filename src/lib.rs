@@ -49,6 +49,7 @@ pub enum Error {
     InvalidGpx(String),
     Http(reqwest::Error),
     MissingDataFile(String),
+    NoRouteFound(isize),
 }
 
 impl std::error::Error for Error {}
@@ -272,6 +273,15 @@ impl Brouter {
         if let Some(m) = regex!("datafile (.*) not found\n"B).captures(text.as_slice()) {
             return Err(Error::MissingDataFile(
                 String::from_utf8_lossy(m.get(1).unwrap().as_bytes()).to_string(),
+            ));
+        }
+
+        if let Some(m) = regex!("no track found at pass=([0-9]+)\n"B).captures(text.as_slice()) {
+            return Err(Error::NoRouteFound(
+                String::from_utf8_lossy(m.get(1).unwrap().as_bytes())
+                    .to_string()
+                    .parse()
+                    .unwrap(),
             ));
         }
 
