@@ -60,6 +60,7 @@ impl std::fmt::Display for Error {
             Error::InvalidGpx(s) => write!(f, "Invalid GPX: {}", s),
             Error::Http(e) => write!(f, "HTTP error: {}", e),
             Error::MissingDataFile(s) => write!(f, "Missing data file: {}", s),
+            Error::NoRouteFound(i) => write!(f, "No route found: {}", i),
         }
     }
 }
