@@ -50,6 +50,7 @@ pub enum Error {
     Http(reqwest::Error),
     MissingDataFile(String),
     NoRouteFound(isize),
+    PassTimeout { pass: String, timeout: String },
     Other(String),
 }
 
@@ -62,6 +63,9 @@ impl std::fmt::Display for Error {
             Error::Other(e) => write!(f, "Error: {}", e),
             Error::Http(e) => write!(f, "HTTP error: {}", e),
             Error::MissingDataFile(s) => write!(f, "Missing data file: {}", s),
+            Error::PassTimeout { pass, timeout } => {
+                write!(f, "Pass {} timeout after {} seconds", pass, timeout)
+            }
             Error::NoRouteFound(i) => write!(f, "No route found: {}", i),
         }
     }
@@ -127,13 +131,6 @@ impl Brouter {
             .body(data)
             .send()
             .map_err(Error::Http)?;
-
-        if response.status() == reqwest::StatusCode::BAD_REQUEST {
-            // 400 is used by brouter for any sort of error
-            let text = response.text().map_err(Error::Http)?;
-
-            return Err(Error::Other(text));
-        }
 
         response.error_for_status().map_err(Error::Http).map(|_| ())
     }
@@ -278,6 +275,8 @@ impl Brouter {
             .error_for_status()
             .map_err(Error::Http)?;
 
+        let status = response.status();
+
         let text = response.bytes().map_err(Error::Http)?.to_vec();
 
         if let Some(m) = regex!("datafile (.*) not found\n"B).captures(text.as_slice()) {
@@ -293,6 +292,25 @@ impl Brouter {
                     .parse()
                     .unwrap(),
             ));
+        }
+
+        if let Some(m) =
+            regex!("pass([0-9]) timeout after ([0-9]+) seconds\n"B).captures(text.as_slice())
+        {
+            let pass = String::from_utf8_lossy(m.get(1).unwrap().as_bytes())
+                .to_string()
+                .parse()
+                .unwrap();
+
+            let timeout = String::from_utf8_lossy(m.get(2).unwrap().as_bytes())
+                .to_string()
+                .parse()
+                .unwrap();
+            return Err(Error::PassTimeout { pass, timeout });
+        }
+
+        if status == reqwest::StatusCode::BAD_REQUEST {
+            return Err(Error::Other(format!("HTTP error: {}", status)));
         }
 
         let gpx: gpx::Gpx = gpx::read(BufReader::new(text.as_slice())).map_err(|_e| {
