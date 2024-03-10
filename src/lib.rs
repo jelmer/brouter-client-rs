@@ -50,6 +50,7 @@ pub enum Error {
     Http(reqwest::Error),
     MissingDataFile(String),
     NoRouteFound(isize),
+    Other(String),
 }
 
 impl std::error::Error for Error {}
@@ -58,6 +59,7 @@ impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Error::InvalidGpx(s) => write!(f, "Invalid GPX: {}", s),
+            Error::Other(e) => write!(f, "Error: {}", e),
             Error::Http(e) => write!(f, "HTTP error: {}", e),
             Error::MissingDataFile(s) => write!(f, "Missing data file: {}", s),
             Error::NoRouteFound(i) => write!(f, "No route found: {}", i),
@@ -125,6 +127,13 @@ impl Brouter {
             .body(data)
             .send()
             .map_err(Error::Http)?;
+
+        if response.status() == reqwest::StatusCode::BAD_REQUEST {
+            // 400 is used by brouter for any sort of error
+            let text = response.text().map_err(Error::Http)?;
+
+            return Err(Error::Other(text));
+        }
 
         response.error_for_status().map_err(Error::Http).map(|_| ())
     }
