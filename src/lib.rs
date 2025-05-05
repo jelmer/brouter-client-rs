@@ -1,3 +1,7 @@
+#![deny(missing_docs)]
+
+//! A Rust client for the BRouter server.
+
 use lazy_regex::regex;
 use log::info;
 use reqwest::blocking::Client;
@@ -7,25 +11,55 @@ use std::io::BufReader;
 // See https://github.com/abrensch/brouter/blob/77977677db5fe78593c6a55afec6a251e69b3449/brouter-server/src/main/java/btools/server/request/ServerHandler.java#L17
 
 #[derive(Debug, Clone)]
+/// A description of some area that should be avoided
 pub enum Nogo {
+    /// A point with a radius
     Point {
+        /// The point
         point: Point,
+
+        /// The radius in meters
         radius: f64,
+
+        /// Weight of the point
         weight: Option<f64>,
     },
+    /// A line
     Line {
+        /// A list of points that make up the line
         points: Vec<Point>,
+
+        /// A weight
         weight: Option<f64>,
     },
+    /// A polygon
     Polygon {
+        /// A list of points that make up the polygon
         points: Vec<Point>,
+
+        /// A weight
         weight: Option<f64>,
     },
 }
 
+impl Nogo {
+    /// Return the weight of the nogo
+    pub fn weight(&self) -> Option<f64> {
+        match self {
+            Nogo::Point { weight, .. } => *weight,
+            Nogo::Line { weight, .. } => *weight,
+            Nogo::Polygon { weight, .. } => *weight,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
+/// A point with latitude and longitude
 pub struct Point {
+    /// Latitude
     lat: f64,
+
+    /// Longitude
     lon: f64,
 }
 
@@ -45,12 +79,30 @@ impl From<Point> for geo_types::Point<f64> {
 }
 
 #[derive(Debug)]
+/// An error that can occur when using the BRouter client
 pub enum Error {
+    /// An error that occurs when the GPX file is invalid
     InvalidGpx(String),
+
+    /// An error that occurs when the HTTP request fails
     Http(reqwest::Error),
+
+    /// An error that occurs when the data file is missing
     MissingDataFile(String),
+
+    /// An error that occurs when no route is found
     NoRouteFound(isize),
-    PassTimeout { pass: String, timeout: String },
+
+    /// An error that occurs when the pass times out
+    PassTimeout {
+        /// The pass number
+        pass: String,
+
+        /// The timeout in seconds
+        timeout: String
+    },
+
+    /// Another error
     Other(String),
 }
 
@@ -72,19 +124,23 @@ impl std::fmt::Display for Error {
 }
 
 impl Point {
+    /// Create a new point with the given latitude and longitude
     pub fn new(lat: f64, lon: f64) -> Self {
         Point { lat, lon }
     }
 
+    /// Return the latitude of the point
     pub fn lat(&self) -> f64 {
         self.lat
     }
 
+    /// Return the longitude of the point
     pub fn lon(&self) -> f64 {
         self.lon
     }
 }
 
+/// A client for the BRouter server
 pub struct Brouter {
     client: Client,
     base_url: Url,
@@ -97,19 +153,36 @@ impl Default for Brouter {
 }
 
 #[derive(Debug, Clone, Copy, Default)]
+/// The mode for turn instructions
 pub enum TurnInstructionMode {
     #[default]
+    /// No turn instructions
     None = 0,
+
+    /// Turn instructions with auto choosing
     AutoChoose = 1,
+
+    /// Use locus style turn instructions
     LocusStyle = 2,
+
+    /// Use osmand style turn instructions
     OsmandStyle = 3,
+
+    /// Use comment style turn instructions
     CommentStyle = 4,
+
+    /// Use gpx style turn instructions
     GpsiesStyle = 5,
+
+    /// Use orux style turn instructions
     OruxStyle = 6,
+
+    /// Use old style locus turn instructions
     LocusOldStyle = 7,
 }
 
 impl Brouter {
+    /// Create a new BRouter client with the given base URL
     pub fn new(base_url: &str) -> Self {
         Brouter {
             client: Client::new(),
@@ -117,6 +190,7 @@ impl Brouter {
         }
     }
 
+    /// Upload a profile to the BRouter server
     pub fn upload_profile(&self, profile: &str, data: Vec<u8>) -> Result<(), Error> {
         let url = self
             .base_url
@@ -135,6 +209,16 @@ impl Brouter {
         response.error_for_status().map_err(Error::Http).map(|_| ())
     }
 
+    /// Route between the given points
+    ///
+    /// # Arguments
+    /// * `points` - A list of points to route between
+    /// * `nogos` - A list of nogos to avoid
+    /// * `profile` - The profile to use for routing
+    /// * `alternativeidx` - The index of the alternative route to use
+    /// * `timode` - The mode for turn instructions
+    /// * `name` - The name of the route
+    /// * `export_waypoints` - Whether to export waypoints
     pub fn broute(
         &self,
         points: &[Point],
