@@ -22,7 +22,6 @@ pub struct BRouterServer {
     /// Base path where BRouter is installed
     pub base_path: PathBuf,
     segments_dir: PathBuf,
-    profile_dir: PathBuf,
     custom_profile_dir: PathBuf,
     process: Option<std::process::Child>,
 }
@@ -31,13 +30,11 @@ impl BRouterServer {
     /// Create a new BRouterServer instance
     pub fn new(brouter_dir: &Path) -> Self {
         let segments_dir = brouter_dir.join("segments4");
-        let profile_dir = brouter_dir.join("profiles");
         let custom_profile_dir = brouter_dir.join("custom_profiles");
 
         BRouterServer {
             base_path: brouter_dir.to_path_buf(),
             segments_dir,
-            profile_dir,
             custom_profile_dir,
             process: None,
         }
@@ -203,6 +200,11 @@ impl BRouterServer {
             .find_jar_file()
             .ok_or("BRouter server JAR file not found")?;
 
+        let profile_dir = jar_path.parent().unwrap().join("profiles2");
+
+        // Ensure the custom profile directory exists
+        fs::create_dir_all(&self.custom_profile_dir)?;
+
         // Start the BRouter server
         let child = Command::new("java")
             .current_dir(&self.base_path)
@@ -215,7 +217,7 @@ impl BRouterServer {
             .arg(jar_path)
             .arg("btools.server.RouteServer")
             .arg(self.segments_dir.to_str().unwrap())
-            .arg(self.profile_dir.to_str().unwrap())
+            .arg(profile_dir.to_str().unwrap())
             .arg(self.custom_profile_dir.to_str().unwrap())
             .arg("17777") // Port
             .arg("1") // Number of threads
@@ -245,5 +247,22 @@ impl BRouterServer {
             process.kill()?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_brouter_server() {
+        let mut brouter = BRouterServer::home();
+        brouter.download_brouter().unwrap();
+        assert!(brouter.has_downloaded());
+        brouter.download_segment("E0_N10").unwrap();
+        assert!(brouter.segments_dir.join("E0_N10.rd5").exists());
+        brouter.start().unwrap();
+        assert!(brouter.is_running());
+        brouter.stop().unwrap();
     }
 }
