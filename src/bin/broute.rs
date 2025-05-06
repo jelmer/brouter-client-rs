@@ -25,7 +25,7 @@ struct Args {
 
 fn main() {
     let args = Args::parse();
-    let router = Brouter::default();
+    let router = Brouter::local().unwrap();
     let gpx = router
         .broute(
             args.points

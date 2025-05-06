@@ -1,12 +1,36 @@
 #![deny(missing_docs)]
-
 //! A Rust client for the BRouter server.
+//!
+//! Example usage:
+//!
+//! ```rust,no_run
+//! use brouter_client::Brouter;
+//!
+//! let brouter = Brouter::local().unwrap();
+//! let points = vec![
+//!    brouter_client::Point::new(52.5200, 13.4050), // Berlin
+//!    brouter_client::Point::new(48.8566, 2.3522), // Paris
+//! ];
+//!
+//! let route = brouter.broute(
+//!   &points,
+//!   &[],
+//!   "trekking",
+//!   None,
+//!   None,
+//!   Some("My Route"),
+//!   false, // Export waypoints
+//!   ).unwrap();
+//!  ```
 
 use lazy_regex::regex;
 use log::info;
 use reqwest::blocking::Client;
 use reqwest::Url;
 use std::io::BufReader;
+
+#[cfg(feature = "local")]
+pub mod local;
 
 // See https://github.com/abrensch/brouter/blob/77977677db5fe78593c6a55afec6a251e69b3449/brouter-server/src/main/java/btools/server/request/ServerHandler.java#L17
 
@@ -144,11 +168,18 @@ impl Point {
 pub struct Brouter {
     client: Client,
     base_url: Url,
+    #[cfg(feature = "local")]
+    server: Option<local::BRouterServer>,
 }
 
-impl Default for Brouter {
-    fn default() -> Self {
-        Self::new("http://localhost:17777")
+impl Drop for Brouter {
+    fn drop(&mut self) {
+        #[cfg(feature = "local")]
+        if let Some(server) = &mut self.server {
+            server.stop().unwrap_or_else(|e| {
+                log::error!("Failed to stop BRouter server: {}", e);
+            });
+        }
     }
 }
 
@@ -187,7 +218,18 @@ impl Brouter {
         Brouter {
             client: Client::new(),
             base_url: Url::parse(base_url).unwrap(),
+            #[cfg(feature = "local")]
+            server: None,
         }
+    }
+
+    #[cfg(feature = "local")]
+    /// Run the BRouter server locally and connect to it
+    pub fn local() -> Result<Self, Box<dyn std::error::Error>> {
+        let mut server = local::BRouterServer::home();
+        server.download_brouter()?;
+        let url = server.start()?;
+        Ok(Self::new(&url))
     }
 
     /// Upload a profile to the BRouter server
