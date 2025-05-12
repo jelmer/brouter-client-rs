@@ -250,6 +250,14 @@ impl BRouterServer {
     }
 }
 
+impl Drop for BRouterServer {
+    fn drop(&mut self) {
+        self.stop().unwrap_or_else(|_| {
+            eprintln!("Failed to stop BRouter server: {}", self.base_path.display());
+        });
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
