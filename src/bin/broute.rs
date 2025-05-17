@@ -1,6 +1,6 @@
 use brouter_client::Brouter;
-use brouter_client::Point;
 use brouter_client::Nogo;
+use brouter_client::Point;
 use clap::Parser;
 
 #[derive(Parser, Clone, Debug)]
@@ -38,8 +38,7 @@ fn main() {
                 })
                 .collect::<Vec<_>>()
                 .as_slice(),
-            args
-                .nogos
+            args.nogos
                 .unwrap_or_default()
                 .iter()
                 .map(|p| {
@@ -52,10 +51,10 @@ fn main() {
                             let lat = parts.next().unwrap().parse::<f64>().unwrap();
                             let radius = parts.next().unwrap().parse::<f64>().unwrap();
                             let weight = parts.next().map(|p| p.parse::<f64>().unwrap());
-                            Nogo::Point{
+                            Nogo::Point {
                                 point: Point::new(lat, lon),
                                 radius,
-                                weight
+                                weight,
                             }
                         }
                         "line" => {
@@ -74,7 +73,7 @@ fn main() {
                                     Point::new(lat, lon)
                                 })
                                 .collect::<Vec<_>>();
-                            Nogo::Line{ points, weight}
+                            Nogo::Line { points, weight }
                         }
                         "polygon" => {
                             // if the number of items in parts is odd, then the last entry is the
@@ -92,7 +91,7 @@ fn main() {
                                     Point::new(lat, lon)
                                 })
                                 .collect::<Vec<_>>();
-                            Nogo::Polygon{ points, weight}
+                            Nogo::Polygon { points, weight }
                         }
                         _ => panic!("Unknown nogo type"),
                     }

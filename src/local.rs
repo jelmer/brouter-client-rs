@@ -86,9 +86,7 @@ impl BRouterServer {
         ))?;
 
         if resp.status() != reqwest::StatusCode::OK {
-            return Err(
-                format!("Failed to download BRouter server: {}", resp.status()).into(),
-            );
+            return Err(format!("Failed to download BRouter server: {}", resp.status()).into());
         }
 
         let bytes = resp.bytes()?;
@@ -137,7 +135,6 @@ impl BRouterServer {
 
     /// Download a specific segment
     pub fn download_segment(&self, segment: &str) -> Result<(), Box<dyn std::error::Error>> {
-
         // Check if the segments directory exists
         if !self.segments_dir.exists() {
             fs::create_dir_all(&self.segments_dir)?;
@@ -154,7 +151,10 @@ impl BRouterServer {
         fs::create_dir_all(&self.segments_dir)?;
 
         // Download the segment
-        let mut resp = get(format!("https://brouter.de/brouter/segments4/{}.rd5", segment))?;
+        let mut resp = get(format!(
+            "https://brouter.de/brouter/segments4/{}.rd5",
+            segment
+        ))?;
         if resp.status() != reqwest::StatusCode::OK {
             return Err(
                 format!("Failed to download segment {}: {}", segment, resp.status()).into(),
@@ -171,8 +171,8 @@ impl BRouterServer {
         if let Some(process) = self.process.as_mut() {
             match process.try_wait() {
                 Ok(Some(_)) => false, // Process has exited
-                Ok(None) => true,    // Process is still running
-                Err(_) => false,     // Error checking process status
+                Ok(None) => true,     // Process is still running
+                Err(_) => false,      // Error checking process status
             }
         } else {
             false // No process started
@@ -253,7 +253,10 @@ impl BRouterServer {
 impl Drop for BRouterServer {
     fn drop(&mut self) {
         self.stop().unwrap_or_else(|_| {
-            eprintln!("Failed to stop BRouter server: {}", self.base_path.display());
+            eprintln!(
+                "Failed to stop BRouter server: {}",
+                self.base_path.display()
+            );
         });
     }
 }

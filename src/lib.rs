@@ -123,7 +123,7 @@ pub enum Error {
         pass: String,
 
         /// The timeout in seconds
-        timeout: String
+        timeout: String,
     },
 
     /// Another error
@@ -229,7 +229,11 @@ impl Brouter {
         let mut server = local::BRouterServer::home();
         server.download_brouter()?;
         let url = server.start()?;
-        Ok(Self::new(&url))
+        Ok(Self {
+            client: Client::new(),
+            base_url: Url::parse(&url).unwrap(),
+            server: Some(server),
+        })
     }
 
     /// Upload a profile to the BRouter server
