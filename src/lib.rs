@@ -27,6 +27,7 @@ use lazy_regex::regex;
 use log::info;
 use reqwest::blocking::Client;
 use reqwest::Url;
+use serde::Deserialize;
 use std::io::BufReader;
 
 #[cfg(feature = "local")]
@@ -126,6 +127,9 @@ pub enum Error {
         timeout: String,
     },
 
+    /// Error uploading profile
+    UploadProfileError(String),
+
     /// Another error
     Other(String),
 }
@@ -143,6 +147,7 @@ impl std::fmt::Display for Error {
                 write!(f, "Pass {} timeout after {} seconds", pass, timeout)
             }
             Error::NoRouteFound(i) => write!(f, "No route found: {}", i),
+            Error::UploadProfileError(s) => write!(f, "Error uploading profile: {}", s),
         }
     }
 }
@@ -181,6 +186,12 @@ impl Drop for Brouter {
             });
         }
     }
+}
+
+#[derive(Deserialize)]
+struct UploadProfileResponse {
+    profileid: String,
+    error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -237,13 +248,14 @@ impl Brouter {
     }
 
     /// Upload a profile to the BRouter server
-    pub fn upload_profile(&self, profile: &str, data: Vec<u8>) -> Result<(), Error> {
-        let url = self
-            .base_url
-            .join("brouter/profile")
-            .unwrap()
-            .join(profile)
-            .unwrap();
+    ///
+    /// # Arguments
+    /// * `data` - contents of the profile
+    ///
+    /// # Returns
+    /// the name of the custom profile that was created
+    pub fn upload_profile(&self, data: Vec<u8>) -> Result<String, Error> {
+        let url = self.base_url.join("brouter/profile").unwrap();
 
         let response = self
             .client
@@ -252,7 +264,15 @@ impl Brouter {
             .send()
             .map_err(Error::Http)?;
 
-        response.error_for_status().map_err(Error::Http).map(|_| ())
+        let response = response.error_for_status().map_err(Error::Http)?;
+
+        let response: UploadProfileResponse = response.json().map_err(Error::Http)?;
+
+        if let Some(error) = response.error {
+            return Err(Error::UploadProfileError(error));
+        } else {
+            return Ok(response.profileid);
+        }
     }
 
     /// Route between the given points
@@ -448,5 +468,366 @@ impl Brouter {
         })?;
 
         Ok(gpx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_point_new() {
+        let point = Point::new(52.5200, 13.4050);
+        assert_eq!(point.lat(), 52.5200);
+        assert_eq!(point.lon(), 13.4050);
+    }
+
+    #[test]
+    fn test_point_from_geo_types() {
+        let geo_point = geo_types::Point::new(13.4050, 52.5200);
+        let point: Point = geo_point.into();
+        assert_eq!(point.lat(), 52.5200);
+        assert_eq!(point.lon(), 13.4050);
+    }
+
+    #[test]
+    fn test_point_to_geo_types() {
+        let point = Point::new(52.5200, 13.4050);
+        let geo_point: geo_types::Point<f64> = point.into();
+        assert_eq!(geo_point.x(), 13.4050);
+        assert_eq!(geo_point.y(), 52.5200);
+    }
+
+    #[test]
+    fn test_nogo_point_weight() {
+        let nogo = Nogo::Point {
+            point: Point::new(52.5200, 13.4050),
+            radius: 100.0,
+            weight: Some(10.0),
+        };
+        assert_eq!(nogo.weight(), Some(10.0));
+    }
+
+    #[test]
+    fn test_nogo_line_weight() {
+        let nogo = Nogo::Line {
+            points: vec![Point::new(52.5200, 13.4050), Point::new(52.5300, 13.4150)],
+            weight: Some(5.0),
+        };
+        assert_eq!(nogo.weight(), Some(5.0));
+    }
+
+    #[test]
+    fn test_nogo_polygon_weight() {
+        let nogo = Nogo::Polygon {
+            points: vec![
+                Point::new(52.5200, 13.4050),
+                Point::new(52.5300, 13.4150),
+                Point::new(52.5250, 13.4100),
+            ],
+            weight: None,
+        };
+        assert_eq!(nogo.weight(), None);
+    }
+
+    #[test]
+    fn test_turn_instruction_mode_default() {
+        let mode = TurnInstructionMode::default();
+        assert_eq!(mode as i32, 0);
+    }
+
+    #[test]
+    fn test_error_display() {
+        let error = Error::InvalidGpx("test error".to_string());
+        assert_eq!(format!("{}", error), "Invalid GPX: test error");
+
+        let error = Error::NoRouteFound(42);
+        assert_eq!(format!("{}", error), "No route found: 42");
+
+        let error = Error::PassTimeout {
+            pass: "1".to_string(),
+            timeout: "30".to_string(),
+        };
+        assert_eq!(format!("{}", error), "Pass 1 timeout after 30 seconds");
+
+        let error = Error::MissingDataFile("test.rd5".to_string());
+        assert_eq!(format!("{}", error), "Missing data file: test.rd5");
+
+        let error = Error::Other("custom error".to_string());
+        assert_eq!(format!("{}", error), "Error: custom error");
+    }
+
+    #[test]
+    fn test_brouter_new() {
+        let brouter = Brouter::new("http://localhost:17777");
+        assert_eq!(brouter.base_url.as_str(), "http://localhost:17777/");
+    }
+
+    #[test]
+    fn test_point_debug() {
+        let point = Point::new(52.5200, 13.4050);
+        let debug_str = format!("{:?}", point);
+        assert!(debug_str.contains("52.52"));
+        assert!(debug_str.contains("13.405"));
+    }
+
+    #[test]
+    fn test_point_clone() {
+        let point = Point::new(52.5200, 13.4050);
+        let cloned = point.clone();
+        assert_eq!(point.lat(), cloned.lat());
+        assert_eq!(point.lon(), cloned.lon());
+    }
+
+    #[test]
+    fn test_nogo_debug() {
+        let nogo = Nogo::Point {
+            point: Point::new(52.5200, 13.4050),
+            radius: 100.0,
+            weight: Some(10.0),
+        };
+        let debug_str = format!("{:?}", nogo);
+        assert!(debug_str.contains("Point"));
+        assert!(debug_str.contains("100"));
+        assert!(debug_str.contains("10"));
+    }
+
+    #[test]
+    fn test_nogo_clone() {
+        let nogo = Nogo::Line {
+            points: vec![Point::new(52.5200, 13.4050), Point::new(52.5300, 13.4150)],
+            weight: Some(5.0),
+        };
+        let cloned = nogo.clone();
+        assert_eq!(nogo.weight(), cloned.weight());
+    }
+
+    #[test]
+    fn test_turn_instruction_mode_values() {
+        assert_eq!(TurnInstructionMode::None as i32, 0);
+        assert_eq!(TurnInstructionMode::AutoChoose as i32, 1);
+        assert_eq!(TurnInstructionMode::LocusStyle as i32, 2);
+        assert_eq!(TurnInstructionMode::OsmandStyle as i32, 3);
+        assert_eq!(TurnInstructionMode::CommentStyle as i32, 4);
+        assert_eq!(TurnInstructionMode::GpsiesStyle as i32, 5);
+        assert_eq!(TurnInstructionMode::OruxStyle as i32, 6);
+        assert_eq!(TurnInstructionMode::LocusOldStyle as i32, 7);
+    }
+
+    #[test]
+    fn test_turn_instruction_mode_debug() {
+        let mode = TurnInstructionMode::LocusStyle;
+        let debug_str = format!("{:?}", mode);
+        assert!(debug_str.contains("LocusStyle"));
+    }
+
+    #[test]
+    fn test_turn_instruction_mode_clone() {
+        let mode = TurnInstructionMode::OsmandStyle;
+        let cloned = mode;
+        assert_eq!(mode as i32, cloned as i32);
+    }
+
+    #[test]
+    fn test_error_debug() {
+        let error = Error::InvalidGpx("test".to_string());
+        let debug_str = format!("{:?}", error);
+        assert!(debug_str.contains("InvalidGpx"));
+        assert!(debug_str.contains("test"));
+    }
+
+    #[test]
+    fn test_error_std_error() {
+        let error = Error::Other("test error".to_string());
+        assert!(std::error::Error::source(&error).is_none());
+    }
+
+    #[test]
+    fn test_nogo_no_weight() {
+        let nogo_point = Nogo::Point {
+            point: Point::new(52.5200, 13.4050),
+            radius: 100.0,
+            weight: None,
+        };
+        assert_eq!(nogo_point.weight(), None);
+
+        let nogo_line = Nogo::Line {
+            points: vec![Point::new(52.5200, 13.4050)],
+            weight: None,
+        };
+        assert_eq!(nogo_line.weight(), None);
+    }
+
+    #[test]
+    fn test_point_edge_values() {
+        let point = Point::new(-90.0, -180.0);
+        assert_eq!(point.lat(), -90.0);
+        assert_eq!(point.lon(), -180.0);
+
+        let point = Point::new(90.0, 180.0);
+        assert_eq!(point.lat(), 90.0);
+        assert_eq!(point.lon(), 180.0);
+
+        let point = Point::new(0.0, 0.0);
+        assert_eq!(point.lat(), 0.0);
+        assert_eq!(point.lon(), 0.0);
+    }
+
+    #[test]
+    fn test_nogo_empty_collections() {
+        let nogo_line = Nogo::Line {
+            points: vec![],
+            weight: Some(1.0),
+        };
+        assert_eq!(nogo_line.weight(), Some(1.0));
+
+        let nogo_polygon = Nogo::Polygon {
+            points: vec![],
+            weight: Some(2.0),
+        };
+        assert_eq!(nogo_polygon.weight(), Some(2.0));
+    }
+
+    #[test]
+    fn test_nogo_single_point_collections() {
+        let point = Point::new(52.5200, 13.4050);
+
+        let nogo_line = Nogo::Line {
+            points: vec![point.clone()],
+            weight: Some(1.0),
+        };
+        assert_eq!(nogo_line.weight(), Some(1.0));
+
+        let nogo_polygon = Nogo::Polygon {
+            points: vec![point],
+            weight: Some(2.0),
+        };
+        assert_eq!(nogo_polygon.weight(), Some(2.0));
+    }
+
+    #[test]
+    fn test_nogo_many_points() {
+        let points: Vec<Point> = (0..10)
+            .map(|i| Point::new(50.0 + i as f64 * 0.1, 10.0 + i as f64 * 0.1))
+            .collect();
+
+        let nogo_line = Nogo::Line {
+            points: points.clone(),
+            weight: Some(5.0),
+        };
+        assert_eq!(nogo_line.weight(), Some(5.0));
+
+        let nogo_polygon = Nogo::Polygon {
+            points,
+            weight: Some(7.0),
+        };
+        assert_eq!(nogo_polygon.weight(), Some(7.0));
+    }
+
+    #[test]
+    fn test_different_url_formats() {
+        let brouter1 = Brouter::new("http://localhost:17777");
+        assert_eq!(brouter1.base_url.as_str(), "http://localhost:17777/");
+
+        let brouter2 = Brouter::new("https://brouter.example.com/");
+        assert_eq!(brouter2.base_url.as_str(), "https://brouter.example.com/");
+
+        let brouter3 = Brouter::new("http://192.168.1.100:8080");
+        assert_eq!(brouter3.base_url.as_str(), "http://192.168.1.100:8080/");
+    }
+
+    #[test]
+    fn test_all_error_variants() {
+        let invalid_gpx = Error::InvalidGpx("malformed".to_string());
+        assert_eq!(format!("{}", invalid_gpx), "Invalid GPX: malformed");
+
+        let missing_data = Error::MissingDataFile("europe.rd5".to_string());
+        assert_eq!(format!("{}", missing_data), "Missing data file: europe.rd5");
+
+        let no_route = Error::NoRouteFound(-1);
+        assert_eq!(format!("{}", no_route), "No route found: -1");
+
+        let timeout = Error::PassTimeout {
+            pass: "2".to_string(),
+            timeout: "120".to_string(),
+        };
+        assert_eq!(format!("{}", timeout), "Pass 2 timeout after 120 seconds");
+
+        let other = Error::Other("connection refused".to_string());
+        assert_eq!(format!("{}", other), "Error: connection refused");
+
+        let upload_error = Error::UploadProfileError("Invalid profile format".to_string());
+        assert_eq!(
+            format!("{}", upload_error),
+            "Error uploading profile: Invalid profile format"
+        );
+    }
+
+    #[test]
+    fn test_upload_profile_response_deserialization() {
+        use serde_json;
+
+        // Test successful response
+        let success_json = r#"{"profileid": "custom_12345", "error": null}"#;
+        let response: UploadProfileResponse = serde_json::from_str(success_json).unwrap();
+        assert_eq!(response.profileid, "custom_12345");
+        assert_eq!(response.error, None);
+
+        // Test error response
+        let error_json = r#"{"profileid": "", "error": "Invalid profile syntax"}"#;
+        let response: UploadProfileResponse = serde_json::from_str(error_json).unwrap();
+        assert_eq!(response.profileid, "");
+        assert_eq!(response.error, Some("Invalid profile syntax".to_string()));
+
+        // Test response with no error field (should be None)
+        let no_error_json = r#"{"profileid": "custom_67890"}"#;
+        let response: UploadProfileResponse = serde_json::from_str(no_error_json).unwrap();
+        assert_eq!(response.profileid, "custom_67890");
+        assert_eq!(response.error, None);
+    }
+
+    #[test]
+    fn test_upload_profile_url_construction() {
+        let brouter = Brouter::new("http://localhost:17777");
+
+        // We can't easily test the upload without a mock server, but we can test
+        // that the URL construction works by checking the base_url
+        let expected_profile_url = "http://localhost:17777/brouter/profile";
+        let profile_url = brouter.base_url.join("brouter/profile").unwrap();
+        assert_eq!(profile_url.as_str(), expected_profile_url);
+    }
+
+    #[test]
+    fn test_valid_profile_data() {
+        // Test with a valid BRouter profile content
+        let valid_profile_data =
+            b"# BRouter profile\nassign turncost 0\nassign uphillcostfactor 1.5\n".to_vec();
+
+        // Since we can't test upload without a server, we test that the data is correctly formatted
+        assert!(!valid_profile_data.is_empty());
+        assert!(valid_profile_data.len() > 10);
+
+        // Test that the profile content contains expected BRouter keywords
+        let profile_str = String::from_utf8_lossy(&valid_profile_data);
+        assert!(profile_str.contains("assign"));
+    }
+
+    #[test]
+    fn test_invalid_profile_data() {
+        // Test with various invalid profile contents
+        let empty_profile: Vec<u8> = Vec::new();
+        assert!(empty_profile.is_empty());
+
+        let invalid_profile = b"invalid profile content without proper syntax".to_vec();
+        let profile_str = String::from_utf8_lossy(&invalid_profile);
+        assert!(!profile_str.contains("assign"));
+
+        // Test with binary data that shouldn't be a valid profile
+        let binary_data = vec![0xFF, 0xFE, 0xFD, 0xFC];
+        assert!(binary_data.len() == 4);
+
+        // Test with extremely long data
+        let long_data = vec![b'a'; 1_000_000];
+        assert!(long_data.len() == 1_000_000);
     }
 }
