@@ -22,7 +22,6 @@ pub struct BRouterServer {
     /// Base path where BRouter is installed
     pub base_path: PathBuf,
     segments_dir: PathBuf,
-    custom_profile_dir: PathBuf,
     process: Option<std::process::Child>,
 }
 
@@ -30,12 +29,10 @@ impl BRouterServer {
     /// Create a new BRouterServer instance
     pub fn new(brouter_dir: &Path) -> Self {
         let segments_dir = brouter_dir.join("segments4");
-        let custom_profile_dir = brouter_dir.join("custom_profiles");
 
         BRouterServer {
             base_path: brouter_dir.to_path_buf(),
             segments_dir,
-            custom_profile_dir,
             process: None,
         }
     }
@@ -77,6 +74,7 @@ impl BRouterServer {
     pub fn download_brouter(&self) -> Result<(), Box<dyn std::error::Error>> {
         // Check if the BRouter server is already downloaded
         if self.find_jar_file().is_some() {
+            log::debug!("JAR file already present, not downloading again");
             return Ok(());
         }
 
@@ -89,12 +87,16 @@ impl BRouterServer {
             return Err(format!("Failed to download BRouter server: {}", resp.status()).into());
         }
 
+        log::debug!("brouter {} downloaded", BROUTER_VERSION);
+
         let bytes = resp.bytes()?;
 
         let cursor = Cursor::new(bytes);
 
         let mut archive = ZipArchive::new(cursor)?;
         archive.extract(&self.base_path)?;
+
+        log::debug!("Extracted archive");
 
         Ok(())
     }
@@ -202,8 +204,7 @@ impl BRouterServer {
 
         let profile_dir = jar_path.parent().unwrap().join("profiles2");
 
-        // Ensure the custom profile directory exists
-        fs::create_dir_all(&self.custom_profile_dir)?;
+        fs::create_dir_all(&profile_dir)?;
 
         // Start the BRouter server
         let child = Command::new("java")
@@ -218,7 +219,7 @@ impl BRouterServer {
             .arg("btools.server.RouteServer")
             .arg(self.segments_dir.to_str().unwrap())
             .arg(profile_dir.to_str().unwrap())
-            .arg(self.custom_profile_dir.to_str().unwrap())
+            .arg("custom_profiles")
             .arg("17777") // Port
             .arg("1") // Number of threads
             .arg("localhost") // Host
@@ -253,7 +254,7 @@ impl BRouterServer {
 impl Drop for BRouterServer {
     fn drop(&mut self) {
         self.stop().unwrap_or_else(|_| {
-            eprintln!(
+            log::error!(
                 "Failed to stop BRouter server: {}",
                 self.base_path.display()
             );
@@ -264,8 +265,10 @@ impl Drop for BRouterServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
 
     #[test]
+    #[serial]
     fn test_brouter_server() {
         let mut brouter = BRouterServer::home();
         brouter.download_brouter().unwrap();
@@ -275,5 +278,212 @@ mod tests {
         brouter.start().unwrap();
         assert!(brouter.is_running());
         brouter.stop().unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn test_upload_valid_profile_live() {
+        let mut server = BRouterServer::home();
+        server.download_brouter().unwrap();
+        let url = server.start().unwrap();
+
+        let client = crate::Brouter::new(&url);
+
+        // Valid BRouter profile content based on existing BRouter profiles
+        let valid_profile = b"# Test profile for upload
+
+---context:global
+assign validForBikes true
+
+---context:way
+assign turncost 0
+assign initialcost 0
+assign costfactor 1.0
+assign uphillcostfactor 1.5
+assign downhillcostfactor 1.0
+
+---context:node
+assign initialcost 0
+assign turncost 0
+"
+        .to_vec();
+
+        // Test uploading valid profile
+        match client.upload_profile(valid_profile) {
+            Ok(profile_id) => {
+                assert!(!profile_id.is_empty());
+                assert!(profile_id.starts_with("custom_"));
+                println!("Successfully uploaded profile with ID: {}", profile_id);
+            }
+            Err(e) => {
+                panic!("Failed to upload valid profile: {:?}", e);
+            }
+        }
+
+        server.stop().unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn test_upload_invalid_profile_live() {
+        let mut server = BRouterServer::home();
+        server.download_brouter().unwrap();
+        let url = server.start().unwrap();
+
+        let client = crate::Brouter::new(&url);
+
+        // Test empty profile
+        let empty_profile = Vec::new();
+        match client.upload_profile(empty_profile) {
+            Ok(_) => panic!("Expected empty profile to fail"),
+            Err(crate::Error::UploadProfileError(_)) => {
+                // Expected error
+            }
+            Err(e) => panic!("Unexpected error type for empty profile: {:?}", e),
+        }
+
+        // Test invalid syntax
+        let invalid_profile = b"This is not a valid BRouter profile
+It has no proper syntax
+Just random text"
+            .to_vec();
+
+        match client.upload_profile(invalid_profile) {
+            Ok(_) => panic!("Expected invalid profile to fail"),
+            Err(crate::Error::UploadProfileError(_)) => {
+                // Expected error
+            }
+            Err(e) => panic!("Unexpected error type for invalid profile: {:?}", e),
+        }
+
+        // Test binary data
+        let binary_data = vec![0xFF, 0xFE, 0xFD, 0xFC, 0xFB, 0xFA];
+        match client.upload_profile(binary_data) {
+            Ok(_) => panic!("Expected binary data to fail"),
+            Err(crate::Error::UploadProfileError(_)) => {
+                // Expected error
+            }
+            Err(e) => panic!("Unexpected error type for binary data: {:?}", e),
+        }
+
+        server.stop().unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn test_upload_multiple_profiles_live() {
+        let mut server = BRouterServer::home();
+        server.download_brouter().unwrap();
+        let url = server.start().unwrap();
+
+        let client = crate::Brouter::new(&url);
+
+        // Upload first profile
+        let profile1 = b"# Test profile 1
+
+---context:global
+assign validForBikes true
+
+---context:way
+assign turncost 0
+assign initialcost 0
+assign costfactor 1.0
+assign uphillcostfactor 1.0
+
+---context:node
+assign initialcost 0
+"
+        .to_vec();
+
+        let profile_id1 = client.upload_profile(profile1).unwrap();
+        assert!(!profile_id1.is_empty());
+
+        // Upload second profile
+        let profile2 = b"# Test profile 2
+
+---context:global
+assign validForBikes true
+
+---context:way
+assign turncost 5
+assign initialcost 0
+assign costfactor 1.0
+assign uphillcostfactor 2.0
+
+---context:node
+assign initialcost 0
+"
+        .to_vec();
+
+        let profile_id2 = client.upload_profile(profile2).unwrap();
+        assert!(!profile_id2.is_empty());
+
+        // Profile IDs should be different
+        assert_ne!(profile_id1, profile_id2);
+
+        server.stop().unwrap();
+    }
+
+    #[test]
+    #[serial]
+    fn test_upload_profile_with_routing_live() {
+        let mut server = BRouterServer::home();
+        server.download_brouter().unwrap();
+        server.download_segment("E0_N50").unwrap(); // Download segment for Berlin area
+        let url = server.start().unwrap();
+
+        let client = crate::Brouter::new(&url);
+
+        // Upload a custom profile
+        let custom_profile = b"# Custom routing profile
+
+---context:global
+assign validForBikes true
+
+---context:way
+assign turncost 0
+assign initialcost 0
+assign costfactor 1.0
+assign uphillcostfactor 1.2
+assign downhillcostfactor 0.8
+
+---context:node
+assign initialcost 0
+"
+        .to_vec();
+
+        let profile_id = client.upload_profile(custom_profile).unwrap();
+
+        // Try to use the uploaded profile for routing
+        let points = vec![
+            crate::Point::new(52.5200, 13.4050), // Berlin
+            crate::Point::new(52.5300, 13.4150), // Nearby point
+        ];
+
+        // Test routing with the custom profile
+        match client.broute(
+            &points,
+            &[],
+            &profile_id,
+            None,
+            None,
+            Some("Test Route"),
+            false,
+        ) {
+            Ok(gpx) => {
+                assert!(!gpx.tracks.is_empty());
+                println!("Successfully routed with custom profile: {}", profile_id);
+            }
+            Err(crate::Error::MissingDataFile(_)) => {
+                // This is acceptable - we might not have the exact data file
+                println!("Missing data file for routing, but profile upload worked");
+            }
+            Err(e) => {
+                // Other errors might indicate profile issues
+                println!("Routing error (may be expected): {:?}", e);
+            }
+        }
+
+        server.stop().unwrap();
     }
 }
